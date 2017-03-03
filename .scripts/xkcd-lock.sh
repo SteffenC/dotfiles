@@ -1,0 +1,68 @@
+#!/bin/bash
+ICON=/tmp/xkcd #might be png or jpg, identify from imagemagick will know
+TMPBG=/tmp/screen.png
+
+PIXELATE="-scale 5% -sample 2000%"
+BLUR="-scale 5% -blur 0x2 -filter lanczos -resize 2000%"
+FILTER=$BLUR
+
+function main {
+	if [[ ! -e $ICON ]]; then
+		download_xkcd &
+	fi
+	getScreenshot &
+	wait
+	embedComic
+	i3lock -u -i $TMPBG -I 5 -d &
+	download_xkcd &
+	wait
+	cleanup
+}
+
+function download_xkcd {
+	local NUMCOMICS=$(curl -sL "http://xkcd.com/info.0.json" | grep -oP '(?<=num": )([^,]*)')
+	local COMIC=404
+	until [[ "$COMIC" -ne "404" ]]; do
+		COMIC=$((1 + RANDOM % $NUMCOMICS))
+	done
+	local URL=$(curl -sL "http://xkcd.com/$COMIC/info.0.json" | grep -oP '(?<=img": ")([^"]*)' | tr -d '\\')
+	curl -sL "$URL" -o $ICON
+}
+
+function getScreenshot {
+	if [[ $(type -P "scrot") ]]; then 
+		scrot $TMPBG;               #scrot is faster
+	else 
+		import -window root $TMPBG; #from the imagemagick suite
+	fi
+	convert $TMPBG $FILTER $TMPBG
+}
+
+function embedComic {
+	#lockscreen image info
+	local C_C=($(identify -format "%w %h" $ICON))
+	local SCREENS=$(xrandr --query | grep ' connected' | grep -o '[0-9][0-9]*x[0-9][0-9]*[^ ]*')
+	if [[ -f "$ICON" ]]; then
+		local COMM=""
+		for RES in $SCREENS; do
+			# monitor position/offset
+			local C_S=(${RES//[x+]/ })
+			local PX=$((${C_S[2]} + ${C_S[0]} / 2 - ${C_C[0]} / 2))
+			local PY=$((${C_S[3]} + ${C_S[1]} / 2 - ${C_C[1]} / 2))
+			if [[ "$COMM" == "" ]]; then
+				COMM="convert $TMPBG \( $ICON -repage +$PX+$PY \) "
+			else
+				COMM="${COMM}\( +clone -repage +$PX+$PY \) " #avoid extra file reads
+			fi
+		done
+		COMM="${COMM}-layers flatten $TMPBG"
+		eval $COMM
+	fi
+}
+
+function cleanup {
+	rm $TMPBG
+	#rm $ICON
+}
+
+main "$@"
